@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="BlurBuddy uses local, open-source OCR to find and blur sensitive information in screenshots before you share them."
+    />
+    <title>BlurBuddy — share screenshots, not secrets</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js"></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="BlurBuddy home">
+          <span class="brand-mark" aria-hidden="true">B</span>
+          <span>BlurBuddy</span>
+        </a>
+        <span class="privacy-pill"><span aria-hidden="true">●</span> runs in your browser</span>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="eyebrow">A tiny privacy buddy for screenshots</div>
+          <h1>Share the screenshot.<br /><em>Keep the secrets.</em></h1>
+          <p class="hero-copy">
+            BlurBuddy finds emails, phone numbers, IP addresses and secret-looking text with
+            open-source OCR, then blurs them before your screenshot leaves your device.
+          </p>
+        </section>
+
+        <section class="workspace-card" aria-labelledby="workspace-title">
+          <div class="workspace-heading">
+            <div>
+              <p class="step-label">Your private workspace</p>
+              <h2 id="workspace-title">Drop in a screenshot</h2>
+            </div>
+            <button id="sampleButton" class="text-button" type="button">Try a sample</button>
+          </div>
+
+          <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+          <button id="dropZone" class="drop-zone" type="button">
+            <span class="upload-icon" aria-hidden="true">↗</span>
+            <strong>Choose a screenshot</strong>
+            <span>PNG, JPG or WebP · processed locally</span>
+          </button>
+
+          <div id="editor" class="editor" hidden>
+            <div class="canvas-shell">
+              <canvas id="imageCanvas" aria-label="Screenshot editor"></canvas>
+              <div id="drawingHint" class="drawing-hint" hidden>Drag over anything else you want hidden</div>
+            </div>
+
+            <aside class="control-panel">
+              <div id="statusCard" class="status-card" aria-live="polite">
+                <div class="status-icon" aria-hidden="true">✦</div>
+                <div>
+                  <strong id="statusTitle">Ready for a privacy check</strong>
+                  <p id="statusText">We’ll look for sensitive text using Tesseract OCR.</p>
+                </div>
+              </div>
+
+              <label class="field-label" for="customTerms">Anything specific to hide?</label>
+              <input
+                id="customTerms"
+                class="text-input"
+                type="text"
+                placeholder="e.g. Temiloluwa, project-codename"
+              />
+              <p class="field-help">Separate multiple terms with commas.</p>
+
+              <label class="field-label" for="blurStrength">Blur strength</label>
+              <input id="blurStrength" type="range" min="6" max="28" value="16" />
+
+              <button id="scanButton" class="primary-button" type="button">
+                <span aria-hidden="true">✦</span> Find &amp; blur sensitive details
+              </button>
+              <button id="downloadButton" class="secondary-button" type="button" disabled>
+                Download safe screenshot
+              </button>
+              <button id="resetButton" class="quiet-button" type="button">Start over</button>
+            </aside>
+          </div>
+        </section>
+
+        <section class="trust-grid" aria-label="Privacy information">
+          <article>
+            <span aria-hidden="true">01</span>
+            <h3>Local by design</h3>
+            <p>Your screenshot is processed in your browser. BlurBuddy has no upload server.</p>
+          </article>
+          <article>
+            <span aria-hidden="true">02</span>
+            <h3>Open at the core</h3>
+            <p>Tesseract.js performs OCR and Canvas handles every redaction.</p>
+          </article>
+          <article>
+            <span aria-hidden="true">03</span>
+            <h3>You stay in control</h3>
+            <p>Review the result and drag over anything the automatic scan missed.</p>
+          </article>
+        </section>
+      </main>
+
+      <footer>
+        Built for a cybersecurity friend who should never have to choose between sharing knowledge and protecting private data.
+      </footer>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
