@@ -12,6 +12,13 @@ export function normalizeTerms(value) {
     .filter(Boolean);
 }
 
+export function describeStrength(value) {
+  const strength = Number(value);
+  if (strength <= 10) return `${strength} · soft`;
+  if (strength <= 20) return `${strength} · balanced`;
+  return `${strength} · chunky`;
+}
+
 export function isSensitiveText(text, customTerms = []) {
   const value = String(text || "").trim();
   if (!value) return false;

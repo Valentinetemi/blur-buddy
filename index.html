@@ -5,115 +5,209 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="BlurBuddy uses local, open-source OCR to find and blur sensitive information in screenshots before you share them."
+      content="BlurBuddy finds and pixelates private details in screenshots with in-browser OCR before you share them."
     />
-    <title>BlurBuddy — share screenshots, not secrets</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,700&display=swap"
-      rel="stylesheet"
-    />
+    <meta name="theme-color" content="#f4faff" />
+    <title>BlurBuddy — screenshots out, secrets tucked away</title>
     <link rel="stylesheet" href="styles.css" />
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js"></script>
   </head>
   <body>
     <div class="page-shell">
       <header class="topbar">
-        <a class="brand" href="#" aria-label="BlurBuddy home">
-          <span class="brand-mark" aria-hidden="true">B</span>
+        <a class="brand" href="#top" aria-label="BlurBuddy home">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span><span></span>
+          </span>
           <span>BlurBuddy</span>
         </a>
-        <span class="privacy-pill"><span aria-hidden="true">●</span> runs in your browser</span>
+        <span class="privacy-pill">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M5.5 8.5V6.8a4.5 4.5 0 0 1 9 0v1.7M4 8.5h12v8H4z" />
+          </svg>
+          stays in your browser
+        </span>
       </header>
 
-      <main>
-        <section class="hero">
-          <div class="eyebrow">A tiny privacy buddy for screenshots</div>
-          <h1>Share the screenshot.<br /><em>Keep the secrets.</em></h1>
-          <p class="hero-copy">
-            BlurBuddy finds emails, phone numbers, IP addresses and secret-looking text with
-            open-source OCR, then blurs them before your screenshot leaves your device.
-          </p>
+      <main id="top">
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-copy-block">
+            <p class="eyebrow"><span aria-hidden="true">↳</span> screenshot privacy, minus the fuss</p>
+            <h1 id="hero-title">Screenshots out.<br /><em>Secrets tucked away.</em></h1>
+            <p class="hero-copy">
+              Drop in a screenshot. BlurBuddy spots private-looking text, lets you cover anything
+              else, and hands back a safer copy.
+            </p>
+          </div>
+          <aside class="hero-note" aria-label="Privacy summary">
+            <span class="tape" aria-hidden="true"></span>
+            <svg viewBox="0 0 32 32" aria-hidden="true">
+              <path d="M16 3.5 27 8v7.2c0 6.5-4.6 11.4-11 13.3C9.6 26.6 5 21.7 5 15.2V8z" />
+              <path d="m11 16 3.2 3.2L21.5 12" />
+            </svg>
+            <p><strong>Your image never takes a detour.</strong></p>
+            <p>OCR runs here in the browser. The OCR library and language model download on first use.</p>
+          </aside>
         </section>
 
-        <section class="workspace-card" aria-labelledby="workspace-title">
+        <section id="workspace" class="workspace-card" aria-labelledby="workspace-title" data-state="empty">
           <div class="workspace-heading">
             <div>
-              <p class="step-label">Your private workspace</p>
-              <h2 id="workspace-title">Drop in a screenshot</h2>
+              <p class="step-label">Your tidy-up desk</p>
+              <h2 id="workspace-title">Bring in a screenshot</h2>
             </div>
-            <button id="sampleButton" class="text-button" type="button">Try a sample</button>
+            <button id="sampleButton" class="text-button" type="button">
+              <span aria-hidden="true">↗</span> Use the practice image
+            </button>
           </div>
 
           <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
           <button id="dropZone" class="drop-zone" type="button">
-            <span class="upload-icon" aria-hidden="true">↗</span>
-            <strong>Choose a screenshot</strong>
-            <span>PNG, JPG or WebP · processed locally</span>
+            <span class="upload-icon" aria-hidden="true">
+              <svg viewBox="0 0 28 28">
+                <path d="M14 19V5m0 0-5 5m5-5 5 5M5 17v5h18v-5" />
+              </svg>
+            </span>
+            <span class="drop-zone-copy">
+              <strong>Choose or drop a screenshot</strong>
+              <span>PNG, JPG or WebP · nothing is uploaded to us</span>
+            </span>
+            <span class="drop-stitch" aria-hidden="true"></span>
           </button>
 
           <div id="editor" class="editor" hidden>
-            <div class="canvas-shell">
-              <canvas id="imageCanvas" aria-label="Screenshot editor"></canvas>
-              <div id="drawingHint" class="drawing-hint" hidden>Drag over anything else you want hidden</div>
+            <div class="canvas-panel">
+              <div class="canvas-toolbar">
+                <span><i aria-hidden="true"></i> private preview</span>
+                <span>drag to cover a spot</span>
+              </div>
+              <div class="canvas-shell">
+                <canvas id="imageCanvas" aria-label="Screenshot editor. Drag over an area to pixelate it."></canvas>
+                <div id="drawingHint" class="drawing-hint" hidden>
+                  <span aria-hidden="true">↙</span> Drag over anything else you want hidden
+                </div>
+              </div>
             </div>
 
-            <aside class="control-panel">
-              <div id="statusCard" class="status-card" aria-live="polite">
-                <div class="status-icon" aria-hidden="true">✦</div>
+            <aside class="control-panel" aria-label="Privacy controls">
+              <div id="statusCard" class="status-card" data-tone="ready" aria-live="polite">
+                <div class="status-icon" aria-hidden="true">
+                  <svg viewBox="0 0 26 26">
+                    <path d="M13 2.8 22 6.5v5.8c0 5.3-3.8 9.3-9 10.9-5.2-1.6-9-5.6-9-10.9V6.5z" />
+                    <path d="m9 13 2.5 2.5 5.7-5.7" />
+                  </svg>
+                </div>
                 <div>
-                  <strong id="statusTitle">Ready for a privacy check</strong>
-                  <p id="statusText">We’ll look for sensitive text using Tesseract OCR.</p>
+                  <strong id="statusTitle">Ready when you are</strong>
+                  <p id="statusText">Bloo can check the text, then you can cover any extras by hand.</p>
                 </div>
               </div>
 
-              <label class="field-label" for="customTerms">Anything specific to hide?</label>
-              <input
-                id="customTerms"
-                class="text-input"
-                type="text"
-                placeholder="e.g. Temiloluwa, project-codename"
-              />
-              <p class="field-help">Separate multiple terms with commas.</p>
+              <div class="control-group">
+                <label class="field-label" for="customTerms">Any names or codenames?</label>
+                <input
+                  id="customTerms"
+                  class="text-input"
+                  type="text"
+                  placeholder="e.g. Temiloluwa, Project Moon"
+                  autocomplete="off"
+                />
+                <p class="field-help">Separate each one with a comma.</p>
+              </div>
 
-              <label class="field-label" for="blurStrength">Blur strength</label>
-              <input id="blurStrength" type="range" min="6" max="28" value="16" />
+              <div class="control-group range-group">
+                <div class="range-heading">
+                  <label class="field-label" for="blurStrength">Pixelation</label>
+                  <output id="strengthValue" for="blurStrength">16 · balanced</output>
+                </div>
+                <input id="blurStrength" type="range" min="6" max="28" value="16" />
+                <div class="range-labels" aria-hidden="true"><span>soft</span><span>chunky</span></div>
+              </div>
 
-              <button id="scanButton" class="primary-button" type="button">
-                <span aria-hidden="true">✦</span> Find &amp; blur sensitive details
-              </button>
-              <button id="downloadButton" class="secondary-button" type="button" disabled>
-                Download safe screenshot
-              </button>
-              <button id="resetButton" class="quiet-button" type="button">Start over</button>
+              <div class="button-stack">
+                <button id="scanButton" class="primary-button glossy-control" type="button">
+                  <span class="button-icon scan-icon" aria-hidden="true"></span>
+                  <span id="scanButtonLabel">Find &amp; cover private details</span>
+                </button>
+                <button id="downloadButton" class="secondary-button glossy-control" type="button" disabled>
+                  <svg viewBox="0 0 22 22" aria-hidden="true">
+                    <path d="M11 3v10m0 0 4-4m-4 4L7 9M4 17.5h14" />
+                  </svg>
+                  <span>Download safer screenshot</span>
+                </button>
+              </div>
+              <button id="resetButton" class="quiet-button" type="button">Clear the desk &amp; start over</button>
             </aside>
           </div>
         </section>
 
-        <section class="trust-grid" aria-label="Privacy information">
-          <article>
-            <span aria-hidden="true">01</span>
-            <h3>Local by design</h3>
-            <p>Your screenshot is processed in your browser. BlurBuddy has no upload server.</p>
-          </article>
-          <article>
-            <span aria-hidden="true">02</span>
-            <h3>Open at the core</h3>
-            <p>Tesseract.js performs OCR and Canvas handles every redaction.</p>
-          </article>
-          <article>
-            <span aria-hidden="true">03</span>
-            <h3>You stay in control</h3>
-            <p>Review the result and drag over anything the automatic scan missed.</p>
-          </article>
+        <section class="privacy-notes" aria-labelledby="privacy-title">
+          <div class="notes-heading">
+            <p class="step-label">The small print, in normal words</p>
+            <h2 id="privacy-title">What happens to your screenshot?</h2>
+          </div>
+          <div class="note-list">
+            <article>
+              <span aria-hidden="true">01</span>
+              <h3>It stays put</h3>
+              <p>Your screenshot is processed on your device. BlurBuddy has no image-upload server.</p>
+            </article>
+            <article>
+              <span aria-hidden="true">02</span>
+              <h3>The model visits once</h3>
+              <p>Tesseract.js and its English model are fetched when you first scan, so that first run needs internet.</p>
+            </article>
+            <article>
+              <span aria-hidden="true">03</span>
+              <h3>You make the last call</h3>
+              <p>Automatic checks can miss things. Review the image and drag over any detail you want covered.</p>
+            </article>
+          </div>
         </section>
       </main>
 
       <footer>
-        Built for a cybersecurity friend who should never have to choose between sharing knowledge and protecting private data.
+        <span>Made for sharing useful screenshots—not accidental secrets.</span>
+        <a href="#workspace">Back to the tidy-up desk ↑</a>
       </footer>
     </div>
+
+    <aside id="blooDock" class="bloo-dock" data-mood="idle" aria-label="Bloo, your privacy buddy">
+      <p id="blooNote" class="bloo-note" aria-live="polite">Hi, I’m Bloo. I’ll keep watch down here.</p>
+      <button id="blooButton" class="bloo-button" type="button" aria-label="Say hello to Bloo">
+        <svg class="bloo" viewBox="0 0 132 158" role="img" aria-labelledby="blooTitle blooDescription">
+          <title id="blooTitle">Bloo</title>
+          <desc id="blooDescription">A tiny rounded blue privacy buddy with a shield badge</desc>
+          <ellipse class="bloo-shadow" cx="67" cy="148" rx="35" ry="7" />
+          <path class="bloo-arm bloo-arm-left" d="M31 76c-14 2-20 12-18 23 1 6 5 9 10 8 6-1 9-7 6-12-2-4-1-7 5-10" />
+          <path class="bloo-arm bloo-arm-right" d="M102 76c13 2 20 11 18 22-1 6-5 9-10 8-6-1-9-7-6-12 2-4 0-7-5-9" />
+          <path class="bloo-body" d="M34 19C45 8 84 7 99 21c9 9 9 27 8 50-1 28-1 51-14 64-12 12-45 13-58 2-14-12-13-37-14-64-1-24 2-44 13-54Z" />
+          <path class="bloo-gloss" d="M40 22c12-8 35-9 48-3 5 2 5 8 0 10-15 6-28 2-43 8-8 3-12-9-5-15Z" />
+          <g class="bloo-face">
+            <g class="bloo-eye bloo-eye-left">
+              <ellipse cx="51" cy="68" rx="12" ry="14" />
+              <circle class="bloo-pupil" cx="53" cy="70" r="5" />
+              <circle class="eye-glint" cx="55" cy="67" r="1.6" />
+            </g>
+            <g class="bloo-eye bloo-eye-right">
+              <ellipse cx="83" cy="68" rx="12" ry="14" />
+              <circle class="bloo-pupil" cx="81" cy="70" r="5" />
+              <circle class="eye-glint" cx="83" cy="67" r="1.6" />
+            </g>
+            <path class="bloo-brow bloo-brow-left" d="M40 50q10-5 19 1" />
+            <path class="bloo-brow bloo-brow-right" d="M75 51q9-6 19-1" />
+            <path class="bloo-mouth bloo-mouth-happy" d="M54 89q13 14 26 0" />
+            <path class="bloo-mouth bloo-mouth-neutral" d="M57 92q10 5 20 0" />
+            <path class="bloo-mouth bloo-mouth-concerned" d="M55 99q12-12 24 0" />
+          </g>
+          <g class="bloo-shield">
+            <path d="m67 105 16 6v10c0 9-7 15-16 18-9-3-16-9-16-18v-10z" />
+            <path d="m60 121 5 5 10-11" />
+          </g>
+          <path class="bloo-scan-line" d="M29 75h76" />
+        </svg>
+      </button>
+    </aside>
 
     <script type="module" src="app.js"></script>
   </body>

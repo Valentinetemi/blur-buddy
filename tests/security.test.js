@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boxesOverlap, clampBox, isSensitiveText, mergeBoxes, normalizeTerms } from "../security.js";
+import {
+  boxesOverlap,
+  clampBox,
+  describeStrength,
+  isSensitiveText,
+  mergeBoxes,
+  normalizeTerms,
+} from "../security.js";
 
 test("detects common private values", () => {
   assert.equal(isSensitiveText("friend@example.com"), true);
@@ -14,6 +21,12 @@ test("supports comma-separated custom terms", () => {
   const terms = normalizeTerms("Temiloluwa, Project Moon,  ");
   assert.deepEqual(terms, ["temiloluwa", "project moon"]);
   assert.equal(isSensitiveText("Owner: Temiloluwa", terms), true);
+});
+
+test("describes pixelation strength in friendly terms", () => {
+  assert.equal(describeStrength(6), "6 · soft");
+  assert.equal(describeStrength("16"), "16 · balanced");
+  assert.equal(describeStrength(28), "28 · chunky");
 });
 
 test("clamps OCR boxes to the image", () => {
