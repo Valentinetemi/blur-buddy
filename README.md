@@ -27,6 +27,8 @@ BlurBuddy uses [Tesseract.js](https://github.com/naptha/tesseract.js) for OCR. R
 - Glossy privacy bubbles that become the real pixelated redactions
 - Replayable tours, before/after comparison, and value-free privacy receipts
 - Safe-to-share review state and manual-redaction acknowledgements
+- Draggable Bloo pet mode with mouse, touch, keyboard reactions, recall, and session memory
+- A quieter handcrafted control system with one clear primary action and compact secondary tools
 - Reduced-motion support and a smaller, less intrusive mobile mascot
 
 ## Run locally

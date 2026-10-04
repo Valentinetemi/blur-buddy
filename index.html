@@ -179,36 +179,50 @@
                 <p class="receipt-review">Manual review recommended</p>
               </section>
 
-              <div class="button-stack">
-                <button id="scanButton" class="primary-button glossy-control" type="button">
-                  <span class="button-icon scan-icon" aria-hidden="true"></span>
-                  <span id="scanButtonLabel">Find &amp; cover private details</span>
-                </button>
-                <button id="replayButton" class="secondary-button glossy-control" type="button" hidden>
-                  <svg viewBox="0 0 22 22" aria-hidden="true">
-                    <path d="M6.2 7.2H2.8V3.8M3.2 7a8 8 0 1 1-.1 7.7" />
-                  </svg>
-                  <span>Replay Bloo’s tour</span>
-                </button>
-                <button id="downloadButton" class="secondary-button glossy-control" type="button" disabled>
-                  <svg viewBox="0 0 22 22" aria-hidden="true">
-                    <path d="M11 3v10m0 0 4-4m-4 4L7 9M4 17.5h14" />
-                  </svg>
-                  <span>Download safer screenshot</span>
-                </button>
-              </div>
-
               <section id="safeShareCard" class="safe-share-card" aria-labelledby="safeShareTitle" hidden>
                 <h3 id="safeShareTitle">Ready for your review</h3>
                 <p>Bloo protected the details it recognised. Review the image before sharing.</p>
-                <button id="finalDownloadButton" class="primary-button glossy-control" type="button">
+              </section>
+
+              <div class="main-actions">
+                <button id="scanButton" class="primary-button" type="button">
+                  <span class="button-icon scan-icon" aria-hidden="true"></span>
+                  <span id="scanButtonLabel">Find &amp; cover private details</span>
+                </button>
+                <button id="downloadButton" class="primary-button" type="button" hidden disabled>
                   <svg viewBox="0 0 22 22" aria-hidden="true">
                     <path d="M11 3v10m0 0 4-4m-4 4L7 9M4 17.5h14" />
                   </svg>
                   <span>Download protected image</span>
                 </button>
-              </section>
-              <button id="resetButton" class="quiet-button" type="button">Clear the desk &amp; start over</button>
+              </div>
+
+              <div class="utility-toolbar" aria-label="Workspace actions">
+                <button id="replayButton" class="icon-control" type="button" hidden>
+                  <svg viewBox="0 0 22 22" aria-hidden="true">
+                    <path d="M6.2 7.2H2.8V3.8M3.2 7a8 8 0 1 1-.1 7.7" />
+                  </svg>
+                  <span>Replay tour</span>
+                </button>
+                <button id="compareButton" class="icon-control" type="button" aria-pressed="false" hidden>
+                  <svg viewBox="0 0 22 22" aria-hidden="true">
+                    <path d="M4 4v14M18 4v14M4 11h14M11 7l4 4-4 4" />
+                  </svg>
+                  <span>Compare</span>
+                </button>
+                <button id="recallBlooButton" class="icon-control" type="button">
+                  <svg viewBox="0 0 22 22" aria-hidden="true">
+                    <path d="M4 11a7 7 0 1 0 2-4.9M4 3.8v4.5h4.5" />
+                  </svg>
+                  <span>Call Bloo home</span>
+                </button>
+                <button id="resetButton" class="icon-control" type="button">
+                  <svg viewBox="0 0 22 22" aria-hidden="true">
+                    <path d="M6 6l10 10M16 6 6 16" />
+                  </svg>
+                  <span>Reset</span>
+                </button>
+              </div>
             </aside>
           </div>
         </section>
@@ -246,7 +260,18 @@
 
     <aside id="blooDock" class="bloo-dock" data-mood="idle" aria-label="Bloo, your privacy buddy">
       <p id="blooNote" class="bloo-note" aria-live="polite">Hi, I’m Bloo. I’ll keep watch down here.</p>
-      <button id="blooButton" class="bloo-button" type="button" aria-label="Say hello to Bloo">
+      <span id="blooInstructions" class="sr-only">
+        Press Enter or Space for a reaction. Use the arrow keys to move Bloo. Drag with a mouse or touch.
+      </span>
+      <div class="pet-bubbles" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <button
+        id="blooButton"
+        class="bloo-button"
+        type="button"
+        aria-label="Play with Bloo, your privacy buddy."
+        aria-describedby="blooInstructions"
+        title="Drag Bloo around · double-click to send Bloo home"
+      >
         <svg class="bloo" viewBox="0 0 132 158" role="img" aria-labelledby="blooTitle blooDescription">
           <title id="blooTitle">Bloo</title>
           <desc id="blooDescription">A tiny rounded blue privacy buddy with a shield badge</desc>

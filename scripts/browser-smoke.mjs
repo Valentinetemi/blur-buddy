@@ -190,10 +190,152 @@ try {
     const summary = result.receipt.split("\n").find((line) => line.includes("private detail"));
     console.log(`Real browser-local Tesseract scan passed. ${summary}`);
   } else {
+  await poll("document.querySelector('#blooDock').classList.contains('is-pet-positioned')", sessionId);
+  assert.match(
+    await evaluate("document.querySelector('#blooButton').getAttribute('aria-label')", sessionId),
+    /Play with Bloo, your privacy buddy/,
+  );
+
+  await evaluate("document.querySelector('#blooButton').click(); true", sessionId);
+  const clickReaction = await evaluate("document.querySelector('#blooDock').className", sessionId);
+  assert.match(clickReaction, /reaction-(?:wave|bounce|spin|squish|bubbles|soft)/);
+  await delay(1150);
+  await evaluate("document.querySelector('#blooButton').focus(); true", sessionId);
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter" }, sessionId);
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter" }, sessionId);
+  await poll("/reaction-(wave|bounce|spin|squish|bubbles|soft)/.test(document.querySelector('#blooDock').className)", sessionId);
+  await delay(1150);
+
+  const mouseDrag = await evaluate(
+    `(() => {
+      const button = document.querySelector('#blooButton');
+      button.setPointerCapture = () => {};
+      const rect = button.getBoundingClientRect();
+      const before = { left: parseFloat(button.parentElement.style.left), top: parseFloat(button.parentElement.style.top) };
+      const fire = (type, x, y) => button.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, pointerId: 31, pointerType: 'mouse', button: 0, clientX: x, clientY: y
+      }));
+      fire('pointerdown', rect.left + 20, rect.top + 20);
+      const picked = button.parentElement.classList.contains('is-picked-up');
+      fire('pointermove', rect.left - 230, rect.top - 130);
+      fire('pointerup', rect.left - 230, rect.top - 130);
+      return {
+        before,
+        after: { left: parseFloat(button.parentElement.style.left), top: parseFloat(button.parentElement.style.top) },
+        picked,
+        dropped: button.parentElement.classList.contains('is-dropped'),
+        stored: sessionStorage.getItem('blurBuddy:bloo-position')
+      };
+    })()`,
+    sessionId,
+  );
+  assert.notDeepEqual(mouseDrag.after, mouseDrag.before);
+  assert.equal(mouseDrag.picked, true);
+  assert.equal(mouseDrag.dropped, true);
+  assert.ok(mouseDrag.stored);
+
+  await evaluate("document.querySelector('#blooButton').focus(); true", sessionId);
+  const beforeKeyboard = await evaluate("parseFloat(document.querySelector('#blooDock').style.left)", sessionId);
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowLeft", code: "ArrowLeft" }, sessionId);
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowLeft", code: "ArrowLeft" }, sessionId);
+  const afterKeyboard = await evaluate("parseFloat(document.querySelector('#blooDock').style.left)", sessionId);
+  assert.ok(afterKeyboard < beforeKeyboard);
+
+  const touchDrag = await evaluate(
+    `(() => {
+      const button = document.querySelector('#blooButton');
+      const rect = button.getBoundingClientRect();
+      const before = { left: parseFloat(button.parentElement.style.left), top: parseFloat(button.parentElement.style.top) };
+      const fire = (type, x, y) => button.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, pointerId: 44, pointerType: 'touch', button: 0, clientX: x, clientY: y
+      }));
+      fire('pointerdown', rect.left + 12, rect.top + 12);
+      fire('pointermove', rect.left - 35, rect.top + 54);
+      fire('pointerup', rect.left - 35, rect.top + 54);
+      return {
+        before,
+        after: { left: parseFloat(button.parentElement.style.left), top: parseFloat(button.parentElement.style.top) }
+      };
+    })()`,
+    sessionId,
+  );
+  assert.notDeepEqual(touchDrag.after, touchDrag.before);
+  const clampedPetPosition = await evaluate(
+    `(() => {
+      const button = document.querySelector('#blooButton');
+      const rect = button.getBoundingClientRect();
+      const fire = (type, x, y) => button.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, pointerId: 45, pointerType: 'touch', button: 0, clientX: x, clientY: y
+      }));
+      fire('pointerdown', rect.left + 8, rect.top + 8);
+      fire('pointermove', -5000, -5000);
+      fire('pointerup', -5000, -5000);
+      const dock = button.parentElement.getBoundingClientRect();
+      return { left: dock.left, top: dock.top, right: dock.right, bottom: dock.bottom, innerWidth, innerHeight };
+    })()`,
+    sessionId,
+  );
+  assert.ok(clampedPetPosition.left >= 0 && clampedPetPosition.top >= 0);
+  assert.ok(clampedPetPosition.right <= clampedPetPosition.innerWidth + 1);
+  assert.ok(clampedPetPosition.bottom <= clampedPetPosition.innerHeight + 1);
+  const savedPetPosition = await evaluate("JSON.parse(sessionStorage.getItem('blurBuddy:bloo-position'))", sessionId);
+
+  const reloaded = waitForEvent("Page.loadEventFired", sessionId);
+  await send("Page.reload", {}, sessionId);
+  await reloaded;
+  await poll("document.querySelector('#blooDock')?.classList.contains('is-pet-positioned')", sessionId);
+  const restoredPetPosition = await evaluate(
+    `({
+      x: parseFloat(document.querySelector('#blooDock').style.left),
+      y: parseFloat(document.querySelector('#blooDock').style.top)
+    })`,
+    sessionId,
+  );
+  assert.ok(Math.abs(restoredPetPosition.x - savedPetPosition.x) < 1);
+  assert.ok(Math.abs(restoredPetPosition.y - savedPetPosition.y) < 1);
+
   await evaluate("document.querySelector('#sampleButton').click(); true", sessionId);
   await poll("!document.querySelector('#editor').hidden && document.querySelector('#imageCanvas').width === 1200", sessionId);
   assert.equal(await evaluate("document.querySelector('#imageCanvas').tabIndex", sessionId), 0);
-  await evaluate("document.querySelector('#scanButton').click(); document.querySelector('#scanButton').click(); true", sessionId);
+  await evaluate("document.querySelector('#recallBlooButton').click(); true", sessionId);
+  await delay(40);
+  const selectedPetPosition = await evaluate(
+    `(() => {
+      const button = document.querySelector('#blooButton');
+      const rect = button.getBoundingClientRect();
+      const fire = (type, x, y) => button.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, pointerId: 52, pointerType: 'mouse', button: 0, clientX: x, clientY: y
+      }));
+      fire('pointerdown', rect.left + 12, rect.top + 12);
+      fire('pointermove', rect.left - 170, rect.top - 115);
+      fire('pointerup', rect.left - 170, rect.top - 115);
+      return { x: parseFloat(button.parentElement.style.left), y: parseFloat(button.parentElement.style.top) };
+    })()`,
+    sessionId,
+  );
+  const blockedDuringScan = await evaluate(
+    `(() => {
+      document.querySelector('#scanButton').click();
+      document.querySelector('#scanButton').click();
+      const button = document.querySelector('#blooButton');
+      const rect = button.getBoundingClientRect();
+      const before = { x: parseFloat(button.parentElement.style.left), y: parseFloat(button.parentElement.style.top) };
+      const fire = (type, x, y) => button.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, pointerId: 63, pointerType: 'mouse', button: 0, clientX: x, clientY: y
+      }));
+      fire('pointerdown', rect.left + 10, rect.top + 10);
+      fire('pointermove', rect.left - 120, rect.top - 80);
+      fire('pointerup', rect.left - 120, rect.top - 80);
+      return {
+        before,
+        after: { x: parseFloat(button.parentElement.style.left), y: parseFloat(button.parentElement.style.top) },
+        disabled: button.getAttribute('aria-disabled')
+      };
+    })()`,
+    sessionId,
+  );
+  assert.deepEqual(blockedDuringScan.after, blockedDuringScan.before);
+  assert.equal(blockedDuringScan.disabled, "true");
   await poll("document.querySelector('#tourBubble').classList.contains('is-dropping')", sessionId, 4000);
 
   const touring = await evaluate(
@@ -221,6 +363,7 @@ try {
       calls: window.__recognizeCalls,
       receipt: document.querySelector('#privacyReceipt').innerText,
       replayVisible: !document.querySelector('#replayButton').hidden,
+      compareVisible: !document.querySelector('#compareButton').hidden,
       comparisonVisible: !document.querySelector('#comparisonUi').hidden,
       safeText: document.querySelector('#safeShareCard p').textContent.trim(),
       downloadEnabled: !document.querySelector('#downloadButton').disabled,
@@ -235,13 +378,57 @@ try {
   assert.equal(completed.receipt.includes("friend@example.com"), false);
   assert.equal(completed.receipt.includes("192.168.10.44"), false);
   assert.equal(completed.replayVisible, true);
-  assert.equal(completed.comparisonVisible, true);
+  assert.equal(completed.compareVisible, true);
+  assert.equal(completed.comparisonVisible, false);
   assert.equal(
     completed.safeText,
     "Bloo protected the details it recognised. Review the image before sharing.",
   );
   assert.equal(completed.downloadEnabled, true);
   assert.equal(completed.blooMood, "success");
+  const restoredAfterTour = await evaluate(
+    `({
+      x: parseFloat(document.querySelector('#blooDock').style.left),
+      y: parseFloat(document.querySelector('#blooDock').style.top)
+    })`,
+    sessionId,
+  );
+  assert.ok(Math.abs(restoredAfterTour.x - selectedPetPosition.x) < 1);
+  assert.ok(Math.abs(restoredAfterTour.y - selectedPetPosition.y) < 1);
+  const visualHierarchy = await evaluate(
+    `(() => ({
+      dominant: [...document.querySelectorAll('.primary-button')].filter((button) =>
+        !button.hidden && !button.classList.contains('is-secondary-action')).length,
+      downloads: document.querySelectorAll('#downloadButton').length,
+      statusBorder: getComputedStyle(document.querySelector('#statusCard')).borderTopWidth,
+      rangeBorder: getComputedStyle(document.querySelector('.range-group')).borderTopWidth,
+      receiptBorder: getComputedStyle(document.querySelector('#privacyReceipt')).borderTopWidth
+    }))()`,
+    sessionId,
+  );
+  assert.equal(visualHierarchy.dominant, 1);
+  assert.equal(visualHierarchy.downloads, 1);
+  assert.equal(visualHierarchy.statusBorder, "0px");
+  assert.equal(visualHierarchy.rangeBorder, "0px");
+  assert.equal(visualHierarchy.receiptBorder, "0px");
+  const receiptBeforePetDrag = completed.receipt;
+  await evaluate(
+    `(() => {
+      const button = document.querySelector('#blooButton');
+      const rect = button.getBoundingClientRect();
+      const fire = (type, x, y) => button.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, pointerId: 71, pointerType: 'mouse', button: 0, clientX: x, clientY: y
+      }));
+      fire('pointerdown', rect.left + 10, rect.top + 10);
+      fire('pointermove', rect.left - 18, rect.top + 22);
+      fire('pointerup', rect.left - 18, rect.top + 22);
+      return true;
+    })()`,
+    sessionId,
+  );
+  assert.equal(await evaluate("document.querySelector('#privacyReceipt').innerText", sessionId), receiptBeforePetDrag);
+  await evaluate("document.querySelector('#compareButton').click(); true", sessionId);
+  assert.equal(await evaluate("document.querySelector('#comparisonUi').hidden", sessionId), false);
   if (captureScreenshots) await captureScreenshot("/tmp/blurbuddy-tour-desktop.png", sessionId);
 
   await evaluate("document.querySelector('#comparisonSlider').value = 27; document.querySelector('#comparisonSlider').dispatchEvent(new Event('input', { bubbles: true })); true", sessionId);
@@ -371,8 +558,13 @@ try {
   );
   assert.equal(reduced.matches, true);
   assert.ok(parseFloat(reduced.duration) <= 0.001, JSON.stringify(reduced));
+  await evaluate("document.querySelector('#blooButton').click(); true", sessionId);
+  assert.equal(
+    await evaluate("document.querySelector('#blooDock').classList.contains('reaction-soft')", sessionId),
+    true,
+  );
 
-  console.log("Browser smoke test passed: sample, tour, replay, reset cancellation, comparison, receipt, pointer/keyboard redaction, download, upload, mobile, reduced motion, and OCR failure.");
+  console.log("Browser smoke test passed: Bloo mouse/touch/keyboard pet mode, session restore, tour handoff, replay, reset, comparison, receipt, redaction, download, upload, mobile, reduced motion, and OCR failure.");
   }
 } finally {
   chrome.kill("SIGTERM");

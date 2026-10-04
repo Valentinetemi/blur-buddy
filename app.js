@@ -23,15 +23,15 @@ const elements = {
   canvas: document.querySelector("#imageCanvas"),
   originalCanvas: document.querySelector("#originalCanvas"),
   comparisonUi: document.querySelector("#comparisonUi"),
-  comparisonDivider: document.querySelector("#comparisonDivider"),
   comparisonSlider: document.querySelector("#comparisonSlider"),
   tourBubble: document.querySelector("#tourBubble"),
   sampleButton: document.querySelector("#sampleButton"),
   scanButton: document.querySelector("#scanButton"),
   scanButtonLabel: document.querySelector("#scanButtonLabel"),
   replayButton: document.querySelector("#replayButton"),
+  compareButton: document.querySelector("#compareButton"),
+  recallBlooButton: document.querySelector("#recallBlooButton"),
   downloadButton: document.querySelector("#downloadButton"),
-  finalDownloadButton: document.querySelector("#finalDownloadButton"),
   resetButton: document.querySelector("#resetButton"),
   customTerms: document.querySelector("#customTerms"),
   blurStrength: document.querySelector("#blurStrength"),
@@ -55,6 +55,15 @@ const defaultDropHelp = elements.dropHelp.textContent;
 const tourSessions = new TourSession();
 const blooHome = elements.blooDock.parentElement;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const BLOO_POSITION_KEY = "blurBuddy:bloo-position";
+const BLOO_REACTION_CLASSES = [
+  "reaction-wave",
+  "reaction-bounce",
+  "reaction-spin",
+  "reaction-squish",
+  "reaction-bubbles",
+  "reaction-soft",
+];
 
 let originalImage = null;
 let redactionBoxes = [];
@@ -66,9 +75,15 @@ let isTouring = false;
 let tourCompleted = false;
 let downloadReady = false;
 let ocrWorker = null;
-let greetingTimer = null;
 let lastProgress = -1;
 let currentTourBox = null;
+let petPosition = null;
+let petDrag = null;
+let suppressBlooClick = false;
+let blooReactionTimer = null;
+let blooCaptionTimer = null;
+let blooIdleTimer = null;
+let lastReactionIndex = -1;
 
 function setStatus(title, text, tone = "ready") {
   elements.statusTitle.textContent = title;
@@ -83,7 +98,11 @@ function setBlooMood(mood, message) {
   }
   elements.blooDock.dataset.mood = mood;
   elements.blooNote.textContent = message;
-  elements.blooButton.setAttribute("aria-label", `${message} Say hello to Bloo.`);
+  elements.blooButton.setAttribute(
+    "aria-label",
+    `Play with Bloo, your privacy buddy. ${message}`,
+  );
+  if (mood === "concerned") showBlooCaption(message, 2600);
 }
 
 function setDropFeedback(message = defaultDropHelp, isError = false) {
@@ -94,9 +113,12 @@ function setDropFeedback(message = defaultDropHelp, isError = false) {
 function setWorkBusy(busy, phase = "scan") {
   elements.scanButton.disabled = busy;
   elements.replayButton.disabled = busy;
+  elements.compareButton.disabled = busy;
+  elements.recallBlooButton.disabled = busy;
   elements.customTerms.disabled = busy;
   elements.downloadButton.disabled = busy || !downloadReady;
-  elements.finalDownloadButton.disabled = busy;
+  elements.blooButton.setAttribute("aria-disabled", String(busy));
+  elements.blooDock.classList.toggle("is-pet-paused", busy);
   elements.scanButton.setAttribute("aria-busy", String(busy));
   if (busy) {
     elements.scanButtonLabel.textContent =
@@ -106,6 +128,15 @@ function setWorkBusy(busy, phase = "scan") {
       ? "Scan this screenshot again"
       : "Find & cover private details";
   }
+  updateActionPriority();
+}
+
+function updateActionPriority() {
+  elements.downloadButton.hidden = !downloadReady;
+  elements.downloadButton.disabled = isScanning || isTouring || !downloadReady;
+  elements.scanButton.classList.toggle("is-secondary-action", tourCompleted);
+  elements.downloadButton.classList.toggle("is-secondary-action", !tourCompleted);
+  elements.scanButton.parentElement.dataset.complete = String(tourCompleted);
 }
 
 function openFilePicker() {
@@ -167,6 +198,8 @@ function showImage(image) {
   elements.workspace.dataset.state = "editing";
   elements.workspaceTitle.textContent = "Make it safe to share";
   elements.replayButton.hidden = true;
+  elements.compareButton.hidden = true;
+  elements.compareButton.setAttribute("aria-pressed", "false");
   elements.privacyReceipt.hidden = true;
   elements.safeShareCard.hidden = true;
   elements.drawingHint.hidden = true;
@@ -383,6 +416,16 @@ function positionBloo(box, immediate = false) {
 }
 
 function enterTourMode(firstBox) {
+  window.clearTimeout(blooIdleTimer);
+  window.clearTimeout(blooReactionTimer);
+  elements.blooDock.classList.remove(
+    "is-picked-up",
+    "is-dropped",
+    "is-speaking",
+    "idle-look",
+    "idle-step",
+    ...BLOO_REACTION_CLASSES,
+  );
   elements.canvasShell.append(elements.blooDock);
   elements.blooDock.classList.remove("is-avoiding");
   elements.blooDock.classList.add("is-touring");
@@ -396,9 +439,8 @@ function enterTourMode(firstBox) {
 function restoreBlooDock() {
   if (elements.blooDock.parentElement !== blooHome) blooHome.append(elements.blooDock);
   elements.blooDock.classList.remove("is-touring");
-  elements.blooDock.style.removeProperty("left");
-  elements.blooDock.style.removeProperty("top");
   elements.blooDock.style.removeProperty("transition");
+  applyPetPosition(petPosition || homeBlooPosition());
 }
 
 function addTourRedaction(box) {
@@ -465,7 +507,11 @@ function finishTour(detections, replay = false) {
   currentTourBox = null;
   restoreBlooDock();
   hidePrivacyBubble();
-  setBlooMood("success", replay ? "Tour replay complete! Everything stayed protected." : "Privacy tour complete! Give the image one last look.");
+  const completionMessage = replay
+    ? "Tour replay complete! Everything stayed protected."
+    : "Privacy tour complete! Give the image one last look.";
+  setBlooMood("success", completionMessage);
+  showBlooCaption(completionMessage, 2200);
 
   if (!replay) {
     tourDetections = detections;
@@ -478,12 +524,15 @@ function finishTour(detections, replay = false) {
     renderCanvas();
     renderReceipt();
     elements.replayButton.hidden = detections.length === 0;
+    elements.compareButton.hidden = false;
+    elements.compareButton.setAttribute("aria-pressed", "false");
     elements.safeShareCard.hidden = false;
-    showComparison();
+    hideComparison();
   }
 
   downloadReady = true;
   elements.downloadButton.disabled = isScanning || isTouring;
+  updateActionPriority();
   elements.drawingHint.hidden = false;
   const count = detections.length;
   setStatus(
@@ -532,7 +581,7 @@ async function scanImage() {
     );
     setBlooMood("concerned", "I can’t reach the OCR tools. You can still cover private spots by hand.");
     downloadReady = true;
-    elements.downloadButton.disabled = false;
+    updateActionPriority();
     elements.drawingHint.hidden = false;
     return;
   }
@@ -587,7 +636,7 @@ async function scanImage() {
     );
     setBlooMood("concerned", "That scan stumbled. I’m sorry—manual covering still works.");
     downloadReady = true;
-    elements.downloadButton.disabled = false;
+    updateActionPriority();
     elements.drawingHint.hidden = false;
   } finally {
     if (session.isCurrent()) {
@@ -595,6 +644,7 @@ async function scanImage() {
       isScanning = false;
       isTouring = false;
       setWorkBusy(false);
+      scheduleBlooIdle();
       window.requestAnimationFrame(updateBlooAvoidance);
     }
   }
@@ -615,6 +665,7 @@ async function replayTour() {
       tourSessions.complete(session);
       isTouring = false;
       setWorkBusy(false);
+      scheduleBlooIdle();
       window.requestAnimationFrame(updateBlooAvoidance);
     }
   }
@@ -646,7 +697,7 @@ function commitManualRedaction(box) {
   if (box.x1 - box.x0 <= 8 || box.y1 - box.y0 <= 8) return false;
   redactionBoxes.push(box);
   downloadReady = true;
-  elements.downloadButton.disabled = false;
+  updateActionPriority();
   elements.drawingHint.hidden = false;
   setStatus(
     "One additional area protected",
@@ -654,6 +705,7 @@ function commitManualRedaction(box) {
     "success",
   );
   setBlooMood("success", "Good catch — one additional area was protected!");
+  showBlooCaption("Good catch — one additional area was protected!", 1700);
   renderReceipt();
   return true;
 }
@@ -752,6 +804,7 @@ function downloadImage() {
     "success",
   );
   setBlooMood("success", "Your protected copy is ready. Nice work reviewing it before sharing!");
+  showBlooCaption("Your protected copy is ready!", 1600);
 }
 
 function resetApp() {
@@ -772,6 +825,8 @@ function resetApp() {
   elements.workspace.dataset.state = "empty";
   elements.workspaceTitle.textContent = "Bring in a screenshot";
   elements.replayButton.hidden = true;
+  elements.compareButton.hidden = true;
+  elements.compareButton.setAttribute("aria-pressed", "false");
   elements.privacyReceipt.hidden = true;
   elements.safeShareCard.hidden = true;
   elements.drawingHint.hidden = true;
@@ -812,6 +867,7 @@ function updateComparison(value = Number(elements.comparisonSlider.value)) {
 function showComparison() {
   elements.originalCanvas.hidden = false;
   elements.comparisonUi.hidden = false;
+  elements.compareButton.setAttribute("aria-pressed", "true");
   updateComparison(50);
   window.requestAnimationFrame(syncOverlayGeometry);
 }
@@ -819,7 +875,14 @@ function showComparison() {
 function hideComparison() {
   elements.originalCanvas.hidden = true;
   elements.comparisonUi.hidden = true;
+  elements.compareButton.setAttribute("aria-pressed", "false");
   updateComparison(0);
+}
+
+function toggleComparison() {
+  if (!tourCompleted || isScanning || isTouring) return;
+  if (elements.comparisonUi.hidden) showComparison();
+  else hideComparison();
 }
 
 function syncOverlayGeometry() {
@@ -840,31 +903,302 @@ function syncOverlayGeometry() {
   }
 }
 
-function greetBloo() {
-  window.clearTimeout(greetingTimer);
-  elements.blooDock.classList.remove("is-greeting");
-  void elements.blooDock.offsetWidth;
-  elements.blooDock.classList.add("is-greeting");
-  greetingTimer = window.setTimeout(() => elements.blooDock.classList.remove("is-greeting"), 1100);
-}
-
 function rectanglesOverlap(a, b) {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
-function updateBlooAvoidance() {
+function clampPetPosition(position) {
+  const margin = window.innerWidth <= 620 ? 6 : 10;
+  const width = elements.blooDock.offsetWidth || (window.innerWidth <= 620 ? 54 : 94);
+  const height = elements.blooDock.offsetHeight || (window.innerWidth <= 620 ? 66 : 112);
+  return {
+    x: Math.min(Math.max(margin, Number(position?.x) || margin), Math.max(margin, window.innerWidth - width - margin)),
+    y: Math.min(Math.max(margin, Number(position?.y) || margin), Math.max(margin, window.innerHeight - height - margin)),
+  };
+}
+
+function homeBlooPosition() {
+  const width = elements.blooDock.offsetWidth || (window.innerWidth <= 620 ? 54 : 94);
+  const height = elements.blooDock.offsetHeight || (window.innerWidth <= 620 ? 66 : 112);
+  const margin = window.innerWidth <= 620 ? 8 : 14;
+  return clampPetPosition({
+    x: window.innerWidth - width - margin,
+    y: window.innerHeight - height - margin,
+  });
+}
+
+function storePetPosition() {
+  if (!petPosition) return;
+  try {
+    window.sessionStorage.setItem(BLOO_POSITION_KEY, JSON.stringify(petPosition));
+  } catch {
+    // Pet mode still works when session storage is unavailable.
+  }
+}
+
+function loadPetPosition() {
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(BLOO_POSITION_KEY));
+    if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y)) return saved;
+  } catch {
+    // A malformed or unavailable session store falls back to Bloo's home position.
+  }
+  return null;
+}
+
+function applyPetPosition(position, { persist = false } = {}) {
   if (elements.blooDock.classList.contains("is-touring")) return;
-  elements.blooDock.classList.remove("is-avoiding");
-  const blooRect = elements.blooButton.getBoundingClientRect();
-  const controls = document.querySelectorAll("button:not(#blooButton), input, a");
-  const overlapsControl = [...controls].some((control) => {
+  petPosition = clampPetPosition(position);
+  elements.blooDock.classList.add("is-pet-positioned");
+  elements.blooDock.style.left = `${petPosition.x}px`;
+  elements.blooDock.style.top = `${petPosition.y}px`;
+  elements.blooDock.classList.toggle("is-near-left", petPosition.x < 100);
+  elements.blooDock.classList.toggle(
+    "is-near-right",
+    petPosition.x > window.innerWidth - elements.blooDock.offsetWidth - 100,
+  );
+  if (persist) storePetPosition();
+}
+
+function visibleControls() {
+  return [...document.querySelectorAll("button:not(#blooButton), input, a")].filter((control) => {
     if (control.hidden || control.closest("[hidden]")) return false;
     const style = window.getComputedStyle(control);
     if (style.display === "none" || style.visibility === "hidden") return false;
     const rect = control.getBoundingClientRect();
-    if (rect.bottom < 0 || rect.top > window.innerHeight) return false;
-    return rectanglesOverlap(blooRect, rect);
+    return rect.bottom >= 0 && rect.top <= window.innerHeight;
   });
+}
+
+function positionOverlapsControls(position, controls) {
+  const width = elements.blooButton.offsetWidth || 82;
+  const height = elements.blooButton.offsetHeight || 98;
+  const candidate = {
+    left: position.x,
+    top: position.y,
+    right: position.x + width,
+    bottom: position.y + height,
+  };
+  return controls.some((control) => rectanglesOverlap(candidate, control.getBoundingClientRect()));
+}
+
+function settlePetPosition({ persist = true } = {}) {
+  if (!petPosition || isScanning || isTouring) return;
+  const controls = visibleControls();
+  if (!positionOverlapsControls(petPosition, controls)) {
+    applyPetPosition(petPosition, { persist });
+    updateBlooAvoidance();
+    return;
+  }
+
+  const home = homeBlooPosition();
+  const margin = window.innerWidth <= 620 ? 8 : 14;
+  const candidates = [
+    { x: margin, y: petPosition.y },
+    { x: window.innerWidth - elements.blooDock.offsetWidth - margin, y: petPosition.y },
+    home,
+    { x: margin, y: window.innerHeight - elements.blooDock.offsetHeight - margin },
+    { x: margin, y: margin },
+    { x: window.innerWidth - elements.blooDock.offsetWidth - margin, y: margin },
+  ]
+    .map(clampPetPosition)
+    .sort(
+      (a, b) =>
+        Math.hypot(a.x - petPosition.x, a.y - petPosition.y) -
+        Math.hypot(b.x - petPosition.x, b.y - petPosition.y),
+    );
+  const safePosition = candidates.find((candidate) => !positionOverlapsControls(candidate, controls));
+  applyPetPosition(safePosition || home, { persist });
+  updateBlooAvoidance();
+}
+
+function showBlooCaption(message, duration = 1800) {
+  window.clearTimeout(blooCaptionTimer);
+  elements.blooNote.textContent = message;
+  elements.blooDock.classList.add("is-speaking");
+  blooCaptionTimer = window.setTimeout(
+    () => elements.blooDock.classList.remove("is-speaking"),
+    duration,
+  );
+}
+
+function clearBlooReaction() {
+  window.clearTimeout(blooReactionTimer);
+  elements.blooDock.classList.remove(...BLOO_REACTION_CLASSES, "is-dropped");
+}
+
+function scheduleBlooIdle() {
+  window.clearTimeout(blooIdleTimer);
+  if (isScanning || isTouring || petDrag) return;
+  blooIdleTimer = window.setTimeout(
+    () => {
+      if (isScanning || isTouring || petDrag || document.hidden) {
+        scheduleBlooIdle();
+        return;
+      }
+      const idleClass = reducedMotion.matches
+        ? "reaction-soft"
+        : Math.random() > 0.45
+          ? "idle-look"
+          : "idle-step";
+      elements.blooDock.classList.add(idleClass);
+      if (Math.random() > 0.78) showBlooCaption("Just keeping watch.", 1400);
+      window.setTimeout(() => {
+        elements.blooDock.classList.remove(idleClass);
+        scheduleBlooIdle();
+      }, motionDuration(1100, 500));
+    },
+    9000 + Math.random() * 7000,
+  );
+}
+
+function playBlooReaction(forcedName) {
+  if (isScanning || isTouring || petDrag) return;
+  const reactions = [
+    { name: "wave", className: "reaction-wave", mood: "playful", caption: "Hi! I’m on privacy patrol." },
+    { name: "bounce", className: "reaction-bounce", mood: "playful", caption: "Boing! Good catch." },
+    { name: "spin", className: "reaction-spin", mood: "playful", caption: "Privacy twirl!" },
+    { name: "squish", className: "reaction-squish", mood: "surprised", caption: "Oh! You found me." },
+    { name: "bubbles", className: "reaction-bubbles", mood: "playful", caption: "Tiny bubbles, zero leaks." },
+  ];
+  let reactionIndex = reactions.findIndex((reaction) => reaction.name === forcedName);
+  if (reactionIndex < 0) {
+    reactionIndex = Math.floor(Math.random() * reactions.length);
+    if (reactionIndex === lastReactionIndex) reactionIndex = (reactionIndex + 1) % reactions.length;
+  }
+  lastReactionIndex = reactionIndex;
+  const reaction = reactions[reactionIndex];
+
+  window.clearTimeout(blooIdleTimer);
+  clearBlooReaction();
+  void elements.blooDock.offsetWidth;
+  elements.blooDock.classList.add(reducedMotion.matches ? "reaction-soft" : reaction.className);
+  setBlooMood(reaction.mood, reaction.caption);
+  showBlooCaption(reaction.caption);
+  blooReactionTimer = window.setTimeout(() => {
+    clearBlooReaction();
+    elements.blooDock.dataset.mood = "idle";
+    elements.blooButton.setAttribute("aria-label", "Play with Bloo, your privacy buddy.");
+    scheduleBlooIdle();
+  }, motionDuration(1050, 650));
+}
+
+function handleBlooPointerDown(event) {
+  if (isScanning || isTouring || (event.pointerType === "mouse" && event.button !== 0)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  clearBlooReaction();
+  window.clearTimeout(blooIdleTimer);
+  elements.blooDock.classList.remove("idle-look", "idle-step");
+  const position = petPosition || clampPetPosition(elements.blooDock.getBoundingClientRect());
+  petDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: position.x,
+    originY: position.y,
+    moved: false,
+  };
+  elements.blooDock.classList.remove("is-avoiding");
+  elements.blooDock.classList.add("is-picked-up");
+  setBlooMood("picked", "Up we go!");
+  showBlooCaption("Up we go!", 900);
+  try {
+    elements.blooButton.setPointerCapture(event.pointerId);
+  } catch {
+    // Synthetic and older pointer implementations may not expose capture.
+  }
+}
+
+function handleBlooPointerMove(event) {
+  if (!petDrag || petDrag.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const deltaX = event.clientX - petDrag.startX;
+  const deltaY = event.clientY - petDrag.startY;
+  if (Math.hypot(deltaX, deltaY) > 4) petDrag.moved = true;
+  applyPetPosition({ x: petDrag.originX + deltaX, y: petDrag.originY + deltaY });
+}
+
+function finishBlooDrag(event) {
+  if (!petDrag || petDrag.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const moved = petDrag.moved;
+  petDrag = null;
+  elements.blooDock.classList.remove("is-picked-up");
+  suppressBlooClick = true;
+  window.setTimeout(() => {
+    suppressBlooClick = false;
+  }, 80);
+  if (moved) {
+    settlePetPosition({ persist: true });
+    elements.blooDock.classList.add("is-dropped");
+    elements.blooDock.dataset.mood = "playful";
+    showBlooCaption("Nice spot!", 1200);
+    window.setTimeout(() => elements.blooDock.classList.remove("is-dropped"), motionDuration(520, 250));
+  } else {
+    playBlooReaction();
+  }
+  scheduleBlooIdle();
+}
+
+function handleBlooClick(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (suppressBlooClick) {
+    suppressBlooClick = false;
+    return;
+  }
+  if (event.detail > 1) return;
+  playBlooReaction();
+}
+
+function handleBlooKeydown(event) {
+  if (isScanning || isTouring) return;
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    event.stopPropagation();
+    playBlooReaction();
+    return;
+  }
+  if (!event.key.startsWith("Arrow")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const step = event.shiftKey ? 24 : 8;
+  const position = petPosition || homeBlooPosition();
+  const offsets = {
+    ArrowLeft: [-step, 0],
+    ArrowRight: [step, 0],
+    ArrowUp: [0, -step],
+    ArrowDown: [0, step],
+  };
+  const [x, y] = offsets[event.key];
+  applyPetPosition({ x: position.x + x, y: position.y + y }, { persist: true });
+  showBlooCaption("Scoot!", 700);
+  settlePetPosition({ persist: true });
+}
+
+function recallBloo() {
+  if (isScanning || isTouring) return;
+  applyPetPosition(homeBlooPosition(), { persist: true });
+  settlePetPosition({ persist: true });
+  playBlooReaction("wave");
+}
+
+function initializeBlooPet() {
+  applyPetPosition(loadPetPosition() || homeBlooPosition());
+  settlePetPosition({ persist: false });
+  scheduleBlooIdle();
+}
+
+function updateBlooAvoidance() {
+  if (elements.blooDock.classList.contains("is-touring") || petDrag) return;
+  elements.blooDock.classList.remove("is-avoiding");
+  const blooRect = elements.blooButton.getBoundingClientRect();
+  const overlapsControl = visibleControls().some((control) =>
+    rectanglesOverlap(blooRect, control.getBoundingClientRect()),
+  );
   elements.blooDock.classList.toggle("is-avoiding", overlapsControl);
 }
 
@@ -873,8 +1207,9 @@ elements.fileInput.addEventListener("change", (event) => handleFile(event.target
 elements.sampleButton.addEventListener("click", createSample);
 elements.scanButton.addEventListener("click", scanImage);
 elements.replayButton.addEventListener("click", replayTour);
+elements.compareButton.addEventListener("click", toggleComparison);
+elements.recallBlooButton.addEventListener("click", recallBloo);
 elements.downloadButton.addEventListener("click", downloadImage);
-elements.finalDownloadButton.addEventListener("click", downloadImage);
 elements.resetButton.addEventListener("click", resetApp);
 elements.blurStrength.addEventListener("input", updateStrength);
 elements.comparisonSlider.addEventListener("input", () => updateComparison());
@@ -885,7 +1220,17 @@ elements.canvas.addEventListener("pointercancel", cancelDrawing);
 elements.canvas.addEventListener("focus", focusKeyboardRedaction);
 elements.canvas.addEventListener("keydown", moveKeyboardRedaction);
 elements.canvas.addEventListener("blur", blurKeyboardRedaction);
-elements.blooButton.addEventListener("click", greetBloo);
+elements.blooButton.addEventListener("pointerdown", handleBlooPointerDown);
+elements.blooButton.addEventListener("pointermove", handleBlooPointerMove);
+elements.blooButton.addEventListener("pointerup", finishBlooDrag);
+elements.blooButton.addEventListener("pointercancel", finishBlooDrag);
+elements.blooButton.addEventListener("click", handleBlooClick);
+elements.blooButton.addEventListener("dblclick", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  recallBloo();
+});
+elements.blooButton.addEventListener("keydown", handleBlooKeydown);
 
 for (const eventName of ["dragenter", "dragover"]) {
   elements.dropZone.addEventListener(eventName, (event) => {
@@ -914,14 +1259,21 @@ window.addEventListener(
 );
 window.addEventListener("resize", () =>
   window.requestAnimationFrame(() => {
+    if (!isTouring) {
+      applyPetPosition(petPosition || homeBlooPosition(), { persist: true });
+      settlePetPosition({ persist: true });
+    }
     syncOverlayGeometry();
     updateBlooAvoidance();
   }),
 );
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) scheduleBlooIdle();
+});
 
 if ("ResizeObserver" in window) {
   new ResizeObserver(() => window.requestAnimationFrame(syncOverlayGeometry)).observe(elements.canvas);
 }
 
 elements.strengthValue.textContent = describeStrength(elements.blurStrength.value);
-window.requestAnimationFrame(updateBlooAvoidance);
+window.requestAnimationFrame(initializeBlooPet);
