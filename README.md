@@ -23,6 +23,10 @@ BlurBuddy uses [Tesseract.js](https://github.com/naptha/tesseract.js) for OCR. R
 - Built-in sample screenshot for a quick demo
 - Distinctive blue, laminated-inspired interface with strong focus and interaction states
 - Animated Bloo mascot with scanning, success and error reactions
+- Sequential Bloo privacy tour driven by real OCR bounding boxes
+- Glossy privacy bubbles that become the real pixelated redactions
+- Replayable tours, before/after comparison, and value-free privacy receipts
+- Safe-to-share review state and manual-redaction acknowledgements
 - Reduced-motion support and a smaller, less intrusive mobile mascot
 
 ## Run locally
@@ -40,6 +44,16 @@ The OCR library and English recognition data are fetched on first use, so the fi
 ```bash
 npm test
 ```
+
+For the browser checks, start the local server in one terminal, then run these in another:
+
+```bash
+npm run test:browser
+npm run test:ocr
+```
+
+The first browser command uses deterministic local OCR fixtures to exercise every interaction. The
+second loads Tesseract.js normally and checks a real browser-local scan of the practice image.
 
 ## Privacy note
 

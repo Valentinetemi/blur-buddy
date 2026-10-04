@@ -6,6 +6,8 @@
   "scripts": {
     "build": "node scripts/build-static.mjs",
     "start": "python3 -m http.server 4173",
-    "test": "node --test"
+    "test": "node --test",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "test:ocr": "node scripts/browser-smoke.mjs http://127.0.0.1:4173 --real-ocr"
   }
 }

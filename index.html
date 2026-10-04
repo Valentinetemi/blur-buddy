@@ -87,7 +87,39 @@
                 <span>drag to cover a spot</span>
               </div>
               <div class="canvas-shell">
-                <canvas id="imageCanvas" aria-label="Screenshot editor. Drag over an area to pixelate it."></canvas>
+                <div id="comparisonStage" class="comparison-stage">
+                  <canvas
+                    id="imageCanvas"
+                    tabindex="0"
+                    aria-label="Screenshot editor"
+                    aria-describedby="canvasInstructions"
+                  ></canvas>
+                  <p id="canvasInstructions" class="sr-only">
+                    Drag over an area to pixelate it. With the canvas focused, use the arrow keys to
+                    position a redaction, plus or minus to resize it, and Enter to protect the area.
+                  </p>
+                  <canvas id="originalCanvas" class="comparison-original" aria-hidden="true"></canvas>
+                  <div id="tourBubble" class="privacy-bubble" aria-hidden="true">
+                    <span></span>
+                  </div>
+                  <div id="comparisonUi" class="comparison-ui" hidden>
+                    <span class="comparison-label before-label">Before</span>
+                    <span class="comparison-label after-label">Protected</span>
+                    <div id="comparisonDivider" class="comparison-divider" aria-hidden="true">
+                      <span>↔</span>
+                    </div>
+                    <label class="sr-only" for="comparisonSlider">Compare original and protected screenshot</label>
+                    <input
+                      id="comparisonSlider"
+                      class="comparison-slider"
+                      type="range"
+                      min="0"
+                      max="100"
+                      value="50"
+                      aria-valuetext="50% original, 50% protected"
+                    />
+                  </div>
+                </div>
                 <div id="drawingHint" class="drawing-hint" hidden>
                   <span aria-hidden="true">↙</span> Drag over anything else you want hidden
                 </div>
@@ -129,10 +161,34 @@
                 <div class="range-labels" aria-hidden="true"><span>soft</span><span>chunky</span></div>
               </div>
 
+              <section
+                id="privacyReceipt"
+                class="privacy-receipt"
+                aria-labelledby="receiptTitle"
+                aria-live="polite"
+                hidden
+              >
+                <div class="receipt-heading">
+                  <span aria-hidden="true">✓</span>
+                  <div>
+                    <h3 id="receiptTitle">Privacy receipt</h3>
+                    <p id="receiptTotal">0 private details protected</p>
+                  </div>
+                </div>
+                <ul id="receiptList"></ul>
+                <p class="receipt-review">Manual review recommended</p>
+              </section>
+
               <div class="button-stack">
                 <button id="scanButton" class="primary-button glossy-control" type="button">
                   <span class="button-icon scan-icon" aria-hidden="true"></span>
                   <span id="scanButtonLabel">Find &amp; cover private details</span>
+                </button>
+                <button id="replayButton" class="secondary-button glossy-control" type="button" hidden>
+                  <svg viewBox="0 0 22 22" aria-hidden="true">
+                    <path d="M6.2 7.2H2.8V3.8M3.2 7a8 8 0 1 1-.1 7.7" />
+                  </svg>
+                  <span>Replay Bloo’s tour</span>
                 </button>
                 <button id="downloadButton" class="secondary-button glossy-control" type="button" disabled>
                   <svg viewBox="0 0 22 22" aria-hidden="true">
@@ -141,6 +197,17 @@
                   <span>Download safer screenshot</span>
                 </button>
               </div>
+
+              <section id="safeShareCard" class="safe-share-card" aria-labelledby="safeShareTitle" hidden>
+                <h3 id="safeShareTitle">Ready for your review</h3>
+                <p>Bloo protected the details it recognised. Review the image before sharing.</p>
+                <button id="finalDownloadButton" class="primary-button glossy-control" type="button">
+                  <svg viewBox="0 0 22 22" aria-hidden="true">
+                    <path d="M11 3v10m0 0 4-4m-4 4L7 9M4 17.5h14" />
+                  </svg>
+                  <span>Download protected image</span>
+                </button>
+              </section>
               <button id="resetButton" class="quiet-button" type="button">Clear the desk &amp; start over</button>
             </aside>
           </div>

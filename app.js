@@ -1,10 +1,15 @@
 import {
-  clampBox,
+  aggregateDetections,
+  buildDetections,
+  canvasBoxToCss,
+  createManualRedaction,
+  createTourStops,
   describeStrength,
-  isSensitiveText,
-  mergeBoxes,
+  formatCategoryCount,
   normalizeTerms,
+  pixelSampleDimensions,
 } from "./security.js";
+import { TourSession, waitForTour } from "./tour.js";
 
 const elements = {
   fileInput: document.querySelector("#fileInput"),
@@ -13,11 +18,20 @@ const elements = {
   editor: document.querySelector("#editor"),
   workspace: document.querySelector("#workspace"),
   workspaceTitle: document.querySelector("#workspace-title"),
+  canvasShell: document.querySelector(".canvas-shell"),
+  comparisonStage: document.querySelector("#comparisonStage"),
   canvas: document.querySelector("#imageCanvas"),
+  originalCanvas: document.querySelector("#originalCanvas"),
+  comparisonUi: document.querySelector("#comparisonUi"),
+  comparisonDivider: document.querySelector("#comparisonDivider"),
+  comparisonSlider: document.querySelector("#comparisonSlider"),
+  tourBubble: document.querySelector("#tourBubble"),
   sampleButton: document.querySelector("#sampleButton"),
   scanButton: document.querySelector("#scanButton"),
   scanButtonLabel: document.querySelector("#scanButtonLabel"),
+  replayButton: document.querySelector("#replayButton"),
   downloadButton: document.querySelector("#downloadButton"),
+  finalDownloadButton: document.querySelector("#finalDownloadButton"),
   resetButton: document.querySelector("#resetButton"),
   customTerms: document.querySelector("#customTerms"),
   blurStrength: document.querySelector("#blurStrength"),
@@ -26,20 +40,35 @@ const elements = {
   statusTitle: document.querySelector("#statusTitle"),
   statusText: document.querySelector("#statusText"),
   drawingHint: document.querySelector("#drawingHint"),
+  privacyReceipt: document.querySelector("#privacyReceipt"),
+  receiptTotal: document.querySelector("#receiptTotal"),
+  receiptList: document.querySelector("#receiptList"),
+  safeShareCard: document.querySelector("#safeShareCard"),
   blooDock: document.querySelector("#blooDock"),
   blooButton: document.querySelector("#blooButton"),
   blooNote: document.querySelector("#blooNote"),
 };
 
 const context = elements.canvas.getContext("2d", { willReadFrequently: true });
+const originalContext = elements.originalCanvas.getContext("2d");
 const defaultDropHelp = elements.dropHelp.textContent;
+const tourSessions = new TourSession();
+const blooHome = elements.blooDock.parentElement;
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
 let originalImage = null;
 let redactionBoxes = [];
+let tourDetections = [];
 let dragStart = null;
+let keyboardRedaction = null;
 let isScanning = false;
+let isTouring = false;
+let tourCompleted = false;
+let downloadReady = false;
 let ocrWorker = null;
 let greetingTimer = null;
 let lastProgress = -1;
+let currentTourBox = null;
 
 function setStatus(title, text, tone = "ready") {
   elements.statusTitle.textContent = title;
@@ -62,14 +91,25 @@ function setDropFeedback(message = defaultDropHelp, isError = false) {
   elements.dropZone.classList.toggle("has-error", isError);
 }
 
-function setScanLoading(loading) {
-  elements.scanButton.disabled = loading;
-  elements.scanButton.setAttribute("aria-busy", String(loading));
-  elements.scanButtonLabel.textContent = loading ? "Reading your screenshot…" : "Scan this screenshot again";
+function setWorkBusy(busy, phase = "scan") {
+  elements.scanButton.disabled = busy;
+  elements.replayButton.disabled = busy;
+  elements.customTerms.disabled = busy;
+  elements.downloadButton.disabled = busy || !downloadReady;
+  elements.finalDownloadButton.disabled = busy;
+  elements.scanButton.setAttribute("aria-busy", String(busy));
+  if (busy) {
+    elements.scanButtonLabel.textContent =
+      phase === "scan" ? "Reading your screenshot…" : "Bloo is protecting details…";
+  } else {
+    elements.scanButtonLabel.textContent = tourCompleted
+      ? "Scan this screenshot again"
+      : "Find & cover private details";
+  }
 }
 
 function openFilePicker() {
-  elements.fileInput.click();
+  if (!isScanning && !isTouring) elements.fileInput.click();
 }
 
 function fitCanvasToImage(image) {
@@ -77,31 +117,73 @@ function fitCanvasToImage(image) {
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
   const scale = Math.min(1, maxDimension / Math.max(width, height));
-  elements.canvas.width = Math.round(width * scale);
-  elements.canvas.height = Math.round(height * scale);
+  const canvasWidth = Math.round(width * scale);
+  const canvasHeight = Math.round(height * scale);
+  elements.canvas.width = canvasWidth;
+  elements.canvas.height = canvasHeight;
+  elements.originalCanvas.width = canvasWidth;
+  elements.originalCanvas.height = canvasHeight;
+}
+
+function drawOriginalComparison() {
+  if (!originalImage) return;
+  originalContext.clearRect(0, 0, elements.originalCanvas.width, elements.originalCanvas.height);
+  originalContext.drawImage(
+    originalImage,
+    0,
+    0,
+    elements.originalCanvas.width,
+    elements.originalCanvas.height,
+  );
+}
+
+function stopActiveWork({ terminateOcr = false } = {}) {
+  tourSessions.cancel();
+  isScanning = false;
+  isTouring = false;
+  currentTourBox = null;
+  hidePrivacyBubble();
+  restoreBlooDock();
+
+  if (terminateOcr && ocrWorker) {
+    const worker = ocrWorker;
+    ocrWorker = null;
+    Promise.resolve(worker.terminate()).catch(() => {});
+  }
 }
 
 function showImage(image) {
+  stopActiveWork({ terminateOcr: isScanning });
   originalImage = image;
   redactionBoxes = [];
+  tourDetections = [];
+  tourCompleted = false;
+  downloadReady = false;
+  keyboardRedaction = null;
   fitCanvasToImage(image);
+  drawOriginalComparison();
   elements.dropZone.hidden = true;
   elements.editor.hidden = false;
   elements.workspace.dataset.state = "editing";
   elements.workspaceTitle.textContent = "Make it safe to share";
-  elements.downloadButton.disabled = true;
-  elements.scanButtonLabel.textContent = "Find & cover private details";
-  elements.scanButton.setAttribute("aria-busy", "false");
+  elements.replayButton.hidden = true;
+  elements.privacyReceipt.hidden = true;
+  elements.safeShareCard.hidden = true;
   elements.drawingHint.hidden = true;
+  hideComparison();
+  setWorkBusy(false);
   setDropFeedback();
   setStatus(
     "Ready when you are",
     "Bloo can check the text, then you can cover any extras by hand.",
     "ready",
   );
-  setBlooMood("idle", "Looks good. Tap the blue button when you want me to check the text.");
+  setBlooMood("idle", "Looks good. Start the privacy tour when you want me to check the text.");
   renderCanvas();
-  window.requestAnimationFrame(updateBlooAvoidance);
+  window.requestAnimationFrame(() => {
+    syncOverlayGeometry();
+    updateBlooAvoidance();
+  });
 }
 
 function loadImageSource(source) {
@@ -115,9 +197,9 @@ function loadImageSource(source) {
 }
 
 function handleFile(file) {
-  if (!file || !file.type.startsWith("image/")) {
+  if (!file || !["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
     setDropFeedback("Please choose a PNG, JPG or WebP screenshot.", true);
-    setBlooMood("concerned", "That doesn’t look like an image. A PNG, JPG or WebP will work.");
+    setBlooMood("concerned", "That doesn’t look like a supported image. A PNG, JPG or WebP will work.");
     return;
   }
 
@@ -179,10 +261,10 @@ function createSample() {
 function drawPixelatedBox(box, strength) {
   const width = Math.max(1, box.x1 - box.x0);
   const height = Math.max(1, box.y1 - box.y0);
-  const sampleSize = Math.max(2, Math.round(Math.min(width, height) / strength));
+  const sample = pixelSampleDimensions(box, strength);
   const temporary = document.createElement("canvas");
-  temporary.width = sampleSize;
-  temporary.height = Math.max(2, Math.round((height / width) * sampleSize));
+  temporary.width = sample.width;
+  temporary.height = sample.height;
   const temporaryContext = temporary.getContext("2d");
 
   temporaryContext.imageSmoothingEnabled = false;
@@ -224,9 +306,16 @@ function renderCanvas(previewBox = null) {
 
   if (previewBox) {
     context.save();
-    context.strokeStyle = "#237eb9";
+    context.strokeStyle = "#176fa8";
+    context.fillStyle = "rgba(66, 155, 213, 0.12)";
     context.lineWidth = Math.max(2, elements.canvas.width / 500);
     context.setLineDash([10, 7]);
+    context.fillRect(
+      previewBox.x0,
+      previewBox.y0,
+      previewBox.x1 - previewBox.x0,
+      previewBox.y1 - previewBox.y0,
+    );
     context.strokeRect(
       previewBox.x0,
       previewBox.y0,
@@ -237,22 +326,204 @@ function renderCanvas(previewBox = null) {
   }
 }
 
-function collectSensitiveBoxes(data, customTerms) {
-  const blocks = data.blocks || [];
-  const lines = blocks.flatMap((block) =>
-    (block.paragraphs || []).flatMap((paragraph) => paragraph.lines || []),
+function createOcrSource() {
+  const source = document.createElement("canvas");
+  source.width = elements.canvas.width;
+  source.height = elements.canvas.height;
+  source.getContext("2d").drawImage(originalImage, 0, 0, source.width, source.height);
+  return source;
+}
+
+function motionDuration(standard, reduced = 18) {
+  return reducedMotion.matches ? reduced : standard;
+}
+
+function hidePrivacyBubble() {
+  elements.tourBubble.classList.remove("is-dropping", "is-pixelating", "is-finished");
+  elements.tourBubble.removeAttribute("style");
+}
+
+function positionBubble(box) {
+  if (!box || !originalImage) return;
+  const canvasRect = elements.canvas.getBoundingClientRect();
+  const stageRect = elements.comparisonStage.getBoundingClientRect();
+  const cssBox = canvasBoxToCss(box, canvasRect, elements.canvas.width, elements.canvas.height);
+  elements.tourBubble.style.left = `${cssBox.left - stageRect.left}px`;
+  elements.tourBubble.style.top = `${cssBox.top - stageRect.top}px`;
+  elements.tourBubble.style.width = `${Math.max(14, cssBox.width)}px`;
+  elements.tourBubble.style.height = `${Math.max(12, cssBox.height)}px`;
+}
+
+function positionBloo(box, immediate = false) {
+  if (!box || !originalImage || !elements.blooDock.classList.contains("is-touring")) return;
+  const canvasRect = elements.canvas.getBoundingClientRect();
+  const shellRect = elements.canvasShell.getBoundingClientRect();
+  const cssBox = canvasBoxToCss(box, canvasRect, elements.canvas.width, elements.canvas.height);
+  const dockRect = elements.blooDock.getBoundingClientRect();
+  const width = dockRect.width || 76;
+  const height = dockRect.height || 92;
+  const maxLeft = Math.max(0, shellRect.width - width);
+  const maxTop = Math.max(0, shellRect.height - height);
+  const targetLeft = Math.min(
+    maxLeft,
+    Math.max(0, cssBox.left - shellRect.left + cssBox.width / 2 - width / 2),
   );
-  const words = lines.flatMap((line) => line.words || []);
-  const candidates = [...lines, ...words];
-  return candidates
-    .filter((item) => item.bbox && isSensitiveText(item.text, customTerms))
-    .map((item) =>
-      clampBox({ ...item.bbox, source: "auto" }, elements.canvas.width, elements.canvas.height),
+  const targetTop = Math.min(
+    maxTop,
+    Math.max(0, cssBox.top - shellRect.top - height * 0.62),
+  );
+
+  if (immediate) elements.blooDock.style.transition = "none";
+  elements.blooDock.style.left = `${targetLeft}px`;
+  elements.blooDock.style.top = `${targetTop}px`;
+  if (immediate) {
+    void elements.blooDock.offsetWidth;
+    elements.blooDock.style.removeProperty("transition");
+  }
+}
+
+function enterTourMode(firstBox) {
+  elements.canvasShell.append(elements.blooDock);
+  elements.blooDock.classList.remove("is-avoiding");
+  elements.blooDock.classList.add("is-touring");
+  const shellRect = elements.canvasShell.getBoundingClientRect();
+  elements.blooDock.style.left = `${Math.max(0, shellRect.width - 90)}px`;
+  elements.blooDock.style.top = `${Math.max(0, shellRect.height - 105)}px`;
+  void elements.blooDock.offsetWidth;
+  if (firstBox) positionBloo(firstBox);
+}
+
+function restoreBlooDock() {
+  if (elements.blooDock.parentElement !== blooHome) blooHome.append(elements.blooDock);
+  elements.blooDock.classList.remove("is-touring");
+  elements.blooDock.style.removeProperty("left");
+  elements.blooDock.style.removeProperty("top");
+  elements.blooDock.style.removeProperty("transition");
+}
+
+function addTourRedaction(box) {
+  const exists = redactionBoxes.some(
+    (candidate) =>
+      candidate.source === "auto" &&
+      candidate.x0 === box.x0 &&
+      candidate.y0 === box.y0 &&
+      candidate.x1 === box.x1 &&
+      candidate.y1 === box.y1,
+  );
+  if (!exists) redactionBoxes.push({ ...box, source: "auto" });
+  renderCanvas();
+}
+
+async function animatePrivacyBubble(stop, session, applyRedaction) {
+  currentTourBox = stop.boundingBox;
+  positionBubble(stop.boundingBox);
+  positionBloo(stop.boundingBox);
+  await waitForTour(motionDuration(660), session.signal);
+  if (!session.isCurrent()) return;
+
+  setBlooMood("discovery", "Found one. I’m dropping a privacy bubble right here.");
+  elements.tourBubble.classList.add("is-dropping");
+  await waitForTour(motionDuration(360), session.signal);
+  if (!session.isCurrent()) return;
+
+  elements.tourBubble.classList.add("is-pixelating");
+  await waitForTour(motionDuration(230), session.signal);
+  if (!session.isCurrent()) return;
+
+  if (applyRedaction) addTourRedaction(stop.boundingBox);
+  elements.tourBubble.classList.add("is-finished");
+  await waitForTour(motionDuration(190), session.signal);
+  hidePrivacyBubble();
+}
+
+function renderReceipt() {
+  if (!tourCompleted) {
+    elements.privacyReceipt.hidden = true;
+    return;
+  }
+
+  const manualCount = redactionBoxes.filter((box) => box.source === "manual").length;
+  const receipt = aggregateDetections(tourDetections, manualCount);
+  elements.receiptTotal.textContent = `${receipt.total} private detail${receipt.total === 1 ? "" : "s"} protected`;
+  elements.receiptList.replaceChildren();
+
+  for (const [category, count] of Object.entries(receipt.categories)) {
+    const item = document.createElement("li");
+    item.textContent = formatCategoryCount(category, count);
+    elements.receiptList.append(item);
+  }
+  if (receipt.manualCount) {
+    const item = document.createElement("li");
+    item.textContent = `${receipt.manualCount} manual area${receipt.manualCount === 1 ? "" : "s"}`;
+    elements.receiptList.append(item);
+  }
+
+  elements.privacyReceipt.hidden = false;
+}
+
+function finishTour(detections, replay = false) {
+  currentTourBox = null;
+  restoreBlooDock();
+  hidePrivacyBubble();
+  setBlooMood("success", replay ? "Tour replay complete! Everything stayed protected." : "Privacy tour complete! Give the image one last look.");
+
+  if (!replay) {
+    tourDetections = detections;
+    const manualBoxes = redactionBoxes.filter((box) => box.source === "manual");
+    redactionBoxes = [
+      ...manualBoxes,
+      ...detections.map((detection) => ({ ...detection.boundingBox, source: "auto" })),
+    ];
+    tourCompleted = true;
+    renderCanvas();
+    renderReceipt();
+    elements.replayButton.hidden = detections.length === 0;
+    elements.safeShareCard.hidden = false;
+    showComparison();
+  }
+
+  downloadReady = true;
+  elements.downloadButton.disabled = isScanning || isTouring;
+  elements.drawingHint.hidden = false;
+  const count = detections.length;
+  setStatus(
+    replay ? "Privacy tour replayed" : "Bloo’s privacy tour is complete",
+    count
+      ? `Bloo protected ${count} detail${count === 1 ? "" : "s"}. Review the image before sharing.`
+      : "Nothing obvious was detected. Review the image carefully and cover anything private by hand.",
+    "success",
+  );
+}
+
+async function runPrivacyTour(detections, session, { replay = false } = {}) {
+  const stops = createTourStops(detections);
+  isTouring = true;
+  setWorkBusy(true, "tour");
+  updateComparison(0);
+
+  if (!stops.length) {
+    await waitForTour(motionDuration(240), session.signal);
+    if (session.isCurrent()) finishTour(detections, replay);
+    return;
+  }
+
+  enterTourMode(stops[0].boundingBox);
+  for (const stop of stops) {
+    if (!session.isCurrent()) return;
+    setBlooMood("scanning", `Heading to detail ${stop.index + 1} of ${stops.length}.`);
+    setStatus(
+      `Protecting detail ${stop.index + 1} of ${stops.length}`,
+      "Bloo is travelling to the detected area and sealing it locally.",
+      "scanning",
     );
+    await animatePrivacyBubble(stop, session, !replay);
+  }
+
+  if (session.isCurrent()) finishTour(detections, replay);
 }
 
 async function scanImage() {
-  if (!originalImage || isScanning) return;
+  if (!originalImage || isScanning || isTouring) return;
   if (!window.Tesseract) {
     setStatus(
       "OCR could not start",
@@ -260,26 +531,28 @@ async function scanImage() {
       "error",
     );
     setBlooMood("concerned", "I can’t reach the OCR tools. You can still cover private spots by hand.");
+    downloadReady = true;
     elements.downloadButton.disabled = false;
     elements.drawingHint.hidden = false;
     return;
   }
 
+  const session = tourSessions.start();
   isScanning = true;
   lastProgress = -1;
-  setScanLoading(true);
+  setWorkBusy(true, "scan");
   setStatus(
     "Reading your screenshot",
     "The first scan can take longer while the OCR model downloads.",
     "scanning",
   );
-  setBlooMood("scanning", "I’m reading the text now. Your image is staying right here.");
+  setBlooMood("scanning", "I’m focused on the text now. Your image is staying right here.");
 
   try {
     if (!ocrWorker) {
-      ocrWorker = await window.Tesseract.createWorker("eng", 1, {
+      const worker = await window.Tesseract.createWorker("eng", 1, {
         logger(message) {
-          if (message.status !== "recognizing text") return;
+          if (!session.isCurrent() || message.status !== "recognizing text") return;
           const progress = Math.round((message.progress || 0) * 100);
           if (progress >= lastProgress + 5 || progress === 100) {
             lastProgress = progress;
@@ -288,63 +561,77 @@ async function scanImage() {
           }
         },
       });
+      if (!session.isCurrent()) {
+        await worker.terminate();
+        return;
+      }
+      ocrWorker = worker;
     }
 
-    const result = await ocrWorker.recognize(elements.canvas, {}, { blocks: true });
-    const customTerms = normalizeTerms(elements.customTerms.value);
-    const detected = collectSensitiveBoxes(result.data, customTerms);
-    redactionBoxes = mergeBoxes([
-      ...redactionBoxes.filter((box) => box.source === "manual"),
-      ...detected,
-    ]);
-    renderCanvas();
-    elements.downloadButton.disabled = false;
-    elements.drawingHint.hidden = false;
-
-    if (detected.length) {
-      const areaLabel = `${detected.length} area${detected.length === 1 ? "" : "s"}`;
-      setStatus(
-        "Private details covered",
-        `${areaLabel} found. Give the image one last look before downloading.`,
-        "success",
-      );
-      setBlooMood("success", `Nice! I covered ${areaLabel}. Please give everything one last look.`);
-    } else {
-      setStatus(
-        "Nothing obvious jumped out",
-        "Automatic checks can miss things. Review the image and drag over anything private.",
-        "ready",
-      );
-      setBlooMood("idle", "I didn’t spot an obvious secret. Let’s still give it a careful once-over.");
-    }
+    const result = await ocrWorker.recognize(createOcrSource(), {}, { blocks: true });
+    if (!session.isCurrent()) return;
+    const detections = buildDetections(
+      result.data,
+      normalizeTerms(elements.customTerms.value),
+      elements.canvas.width,
+      elements.canvas.height,
+    );
+    isScanning = false;
+    await runPrivacyTour(detections, session);
   } catch (error) {
-    console.error(error);
+    if (!session.isCurrent() || error?.name === "AbortError") return;
     setStatus(
       "The scan did not finish",
       "Try once more, or drag over private areas yourself—the editor still works.",
       "error",
     );
     setBlooMood("concerned", "That scan stumbled. I’m sorry—manual covering still works.");
+    downloadReady = true;
     elements.downloadButton.disabled = false;
     elements.drawingHint.hidden = false;
   } finally {
-    isScanning = false;
-    setScanLoading(false);
-    window.requestAnimationFrame(updateBlooAvoidance);
+    if (session.isCurrent()) {
+      tourSessions.complete(session);
+      isScanning = false;
+      isTouring = false;
+      setWorkBusy(false);
+      window.requestAnimationFrame(updateBlooAvoidance);
+    }
+  }
+}
+
+async function replayTour() {
+  if (!tourCompleted || !tourDetections.length || isScanning || isTouring) return;
+  const session = tourSessions.start();
+  try {
+    await runPrivacyTour(tourDetections, session, { replay: true });
+  } catch (error) {
+    if (error?.name !== "AbortError" && session.isCurrent()) {
+      setStatus("Replay paused", "Your protected image is unchanged and ready to review.", "ready");
+      setBlooMood("concerned", "The replay paused, but your protected image is unchanged.");
+    }
+  } finally {
+    if (session.isCurrent()) {
+      tourSessions.complete(session);
+      isTouring = false;
+      setWorkBusy(false);
+      window.requestAnimationFrame(updateBlooAvoidance);
+    }
   }
 }
 
 function canvasPoint(event) {
   const rect = elements.canvas.getBoundingClientRect();
-  const point = event.touches?.[0] || event;
   return {
-    x: ((point.clientX - rect.left) / rect.width) * elements.canvas.width,
-    y: ((point.clientY - rect.top) / rect.height) * elements.canvas.height,
+    x: ((event.clientX - rect.left) / rect.width) * elements.canvas.width,
+    y: ((event.clientY - rect.top) / rect.height) * elements.canvas.height,
   };
 }
 
 function startDrawing(event) {
-  if (!originalImage || isScanning) return;
+  if (!originalImage || isScanning || isTouring || event.button !== 0) return;
+  updateComparison(0);
+  keyboardRedaction = null;
   dragStart = canvasPoint(event);
   elements.canvas.setPointerCapture?.(event.pointerId);
 }
@@ -352,42 +639,36 @@ function startDrawing(event) {
 function moveDrawing(event) {
   if (!dragStart) return;
   const point = canvasPoint(event);
-  renderCanvas({
-    x0: Math.min(dragStart.x, point.x),
-    y0: Math.min(dragStart.y, point.y),
-    x1: Math.max(dragStart.x, point.x),
-    y1: Math.max(dragStart.y, point.y),
-  });
+  renderCanvas(createManualRedaction(dragStart, point, elements.canvas.width, elements.canvas.height));
+}
+
+function commitManualRedaction(box) {
+  if (box.x1 - box.x0 <= 8 || box.y1 - box.y0 <= 8) return false;
+  redactionBoxes.push(box);
+  downloadReady = true;
+  elements.downloadButton.disabled = false;
+  elements.drawingHint.hidden = false;
+  setStatus(
+    "One additional area protected",
+    "Good catch. Review the image again or download when it looks right.",
+    "success",
+  );
+  setBlooMood("success", "Good catch — one additional area was protected!");
+  renderReceipt();
+  return true;
 }
 
 function finishDrawing(event) {
   if (!dragStart) return;
   const point = canvasPoint(event);
-  const box = clampBox(
-    {
-      x0: Math.min(dragStart.x, point.x),
-      y0: Math.min(dragStart.y, point.y),
-      x1: Math.max(dragStart.x, point.x),
-      y1: Math.max(dragStart.y, point.y),
-      source: "manual",
-    },
+  const box = createManualRedaction(
+    dragStart,
+    point,
     elements.canvas.width,
     elements.canvas.height,
-    0,
   );
   dragStart = null;
-
-  if (box.x1 - box.x0 > 8 && box.y1 - box.y0 > 8) {
-    redactionBoxes.push(box);
-    elements.downloadButton.disabled = false;
-    elements.drawingHint.hidden = false;
-    setStatus(
-      "That spot is covered",
-      "Add another area, run the text check, or download when it looks right.",
-      "success",
-    );
-    setBlooMood("success", "Good catch! That spot is covered now.");
-  }
+  commitManualRedaction(box);
   renderCanvas();
 }
 
@@ -396,21 +677,92 @@ function cancelDrawing() {
   renderCanvas();
 }
 
+function initialKeyboardRedaction() {
+  const width = Math.max(40, elements.canvas.width * 0.22);
+  const height = Math.max(24, elements.canvas.height * 0.09);
+  const centerX = elements.canvas.width / 2;
+  const centerY = elements.canvas.height / 2;
+  return createManualRedaction(
+    { x: centerX - width / 2, y: centerY - height / 2 },
+    { x: centerX + width / 2, y: centerY + height / 2 },
+    elements.canvas.width,
+    elements.canvas.height,
+  );
+}
+
+function focusKeyboardRedaction() {
+  if (!originalImage || isScanning || isTouring) return;
+  updateComparison(0);
+  keyboardRedaction ||= initialKeyboardRedaction();
+  renderCanvas(keyboardRedaction);
+}
+
+function moveKeyboardRedaction(event) {
+  if (!originalImage || isScanning || isTouring) return;
+  keyboardRedaction ||= initialKeyboardRedaction();
+  const movement = event.shiftKey ? 24 : 8;
+  const resize = event.shiftKey ? 16 : 6;
+  let { x0, y0, x1, y1 } = keyboardRedaction;
+
+  if (event.key === "ArrowLeft") [x0, x1] = [x0 - movement, x1 - movement];
+  else if (event.key === "ArrowRight") [x0, x1] = [x0 + movement, x1 + movement];
+  else if (event.key === "ArrowUp") [y0, y1] = [y0 - movement, y1 - movement];
+  else if (event.key === "ArrowDown") [y0, y1] = [y0 + movement, y1 + movement];
+  else if (["+", "="].includes(event.key)) [x0, y0, x1, y1] = [x0 - resize, y0 - resize, x1 + resize, y1 + resize];
+  else if (["-", "_"].includes(event.key)) [x0, y0, x1, y1] = [x0 + resize, y0 + resize, x1 - resize, y1 - resize];
+  else if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    commitManualRedaction({ ...keyboardRedaction, source: "manual" });
+    keyboardRedaction = null;
+    renderCanvas();
+    return;
+  } else if (event.key === "Escape") {
+    keyboardRedaction = null;
+    renderCanvas();
+    return;
+  } else {
+    return;
+  }
+
+  event.preventDefault();
+  keyboardRedaction = createManualRedaction(
+    { x: x0, y: y0 },
+    { x: x1, y: y1 },
+    elements.canvas.width,
+    elements.canvas.height,
+  );
+  renderCanvas(keyboardRedaction);
+}
+
+function blurKeyboardRedaction() {
+  keyboardRedaction = null;
+  if (!dragStart) renderCanvas();
+}
+
 function downloadImage() {
   if (!originalImage) return;
   renderCanvas();
   const link = document.createElement("a");
-  link.download = `blur-buddy-safe-${Date.now()}.png`;
+  link.download = `blur-buddy-protected-${Date.now()}.png`;
   link.href = elements.canvas.toDataURL("image/png");
   link.click();
-  setStatus("Safer copy downloaded", "Keep the original private, and share the new copy with care.", "success");
-  setBlooMood("success", "Your safer copy is ready. Nice work checking it before sharing!");
+  setStatus(
+    "Protected copy downloaded",
+    "Keep the original private, and review the new copy before sharing.",
+    "success",
+  );
+  setBlooMood("success", "Your protected copy is ready. Nice work reviewing it before sharing!");
 }
 
 function resetApp() {
+  stopActiveWork({ terminateOcr: true });
   originalImage = null;
   redactionBoxes = [];
+  tourDetections = [];
+  tourCompleted = false;
+  downloadReady = false;
   dragStart = null;
+  keyboardRedaction = null;
   elements.fileInput.value = "";
   elements.customTerms.value = "";
   elements.blurStrength.value = "16";
@@ -419,11 +771,14 @@ function resetApp() {
   elements.dropZone.hidden = false;
   elements.workspace.dataset.state = "empty";
   elements.workspaceTitle.textContent = "Bring in a screenshot";
-  elements.downloadButton.disabled = true;
-  elements.scanButton.disabled = false;
-  elements.scanButtonLabel.textContent = "Find & cover private details";
-  elements.scanButton.setAttribute("aria-busy", "false");
+  elements.replayButton.hidden = true;
+  elements.privacyReceipt.hidden = true;
+  elements.safeShareCard.hidden = true;
   elements.drawingHint.hidden = true;
+  context.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+  originalContext.clearRect(0, 0, elements.originalCanvas.width, elements.originalCanvas.height);
+  hideComparison();
+  setWorkBusy(false);
   setDropFeedback();
   setBlooMood("idle", "Fresh desk, fresh start. Drop in a screenshot when you’re ready.");
   setStatus(
@@ -431,12 +786,58 @@ function resetApp() {
     "Bloo can check the text, then you can cover any extras by hand.",
     "ready",
   );
-  window.requestAnimationFrame(updateBlooAvoidance);
+  window.requestAnimationFrame(() => {
+    updateBlooAvoidance();
+    elements.dropZone.focus();
+  });
 }
 
 function updateStrength() {
   elements.strengthValue.textContent = describeStrength(elements.blurStrength.value);
   renderCanvas();
+}
+
+function updateComparison(value = Number(elements.comparisonSlider.value)) {
+  const percentage = Math.max(0, Math.min(100, Number(value)));
+  elements.comparisonSlider.value = String(percentage);
+  const position = `${percentage}%`;
+  elements.originalCanvas.style.setProperty("--comparison-position", position);
+  elements.comparisonUi.style.setProperty("--comparison-position", position);
+  elements.comparisonSlider.setAttribute(
+    "aria-valuetext",
+    `${Math.round(percentage)}% original, ${Math.round(100 - percentage)}% protected`,
+  );
+}
+
+function showComparison() {
+  elements.originalCanvas.hidden = false;
+  elements.comparisonUi.hidden = false;
+  updateComparison(50);
+  window.requestAnimationFrame(syncOverlayGeometry);
+}
+
+function hideComparison() {
+  elements.originalCanvas.hidden = true;
+  elements.comparisonUi.hidden = true;
+  updateComparison(0);
+}
+
+function syncOverlayGeometry() {
+  if (!originalImage || elements.editor.hidden) return;
+  const canvasRect = elements.canvas.getBoundingClientRect();
+  const stageRect = elements.comparisonStage.getBoundingClientRect();
+  const left = canvasRect.left - stageRect.left;
+  const top = canvasRect.top - stageRect.top;
+  for (const overlay of [elements.originalCanvas, elements.comparisonUi]) {
+    overlay.style.left = `${left}px`;
+    overlay.style.top = `${top}px`;
+    overlay.style.width = `${canvasRect.width}px`;
+    overlay.style.height = `${canvasRect.height}px`;
+  }
+  if (currentTourBox) {
+    positionBubble(currentTourBox);
+    positionBloo(currentTourBox, true);
+  }
 }
 
 function greetBloo() {
@@ -452,6 +853,7 @@ function rectanglesOverlap(a, b) {
 }
 
 function updateBlooAvoidance() {
+  if (elements.blooDock.classList.contains("is-touring")) return;
   elements.blooDock.classList.remove("is-avoiding");
   const blooRect = elements.blooButton.getBoundingClientRect();
   const controls = document.querySelectorAll("button:not(#blooButton), input, a");
@@ -470,13 +872,19 @@ elements.dropZone.addEventListener("click", openFilePicker);
 elements.fileInput.addEventListener("change", (event) => handleFile(event.target.files[0]));
 elements.sampleButton.addEventListener("click", createSample);
 elements.scanButton.addEventListener("click", scanImage);
+elements.replayButton.addEventListener("click", replayTour);
 elements.downloadButton.addEventListener("click", downloadImage);
+elements.finalDownloadButton.addEventListener("click", downloadImage);
 elements.resetButton.addEventListener("click", resetApp);
 elements.blurStrength.addEventListener("input", updateStrength);
+elements.comparisonSlider.addEventListener("input", () => updateComparison());
 elements.canvas.addEventListener("pointerdown", startDrawing);
 elements.canvas.addEventListener("pointermove", moveDrawing);
 elements.canvas.addEventListener("pointerup", finishDrawing);
 elements.canvas.addEventListener("pointercancel", cancelDrawing);
+elements.canvas.addEventListener("focus", focusKeyboardRedaction);
+elements.canvas.addEventListener("keydown", moveKeyboardRedaction);
+elements.canvas.addEventListener("blur", blurKeyboardRedaction);
 elements.blooButton.addEventListener("click", greetBloo);
 
 for (const eventName of ["dragenter", "dragover"]) {
@@ -494,8 +902,26 @@ for (const eventName of ["dragleave", "drop"]) {
 }
 
 elements.dropZone.addEventListener("drop", (event) => handleFile(event.dataTransfer.files[0]));
-window.addEventListener("scroll", () => window.requestAnimationFrame(updateBlooAvoidance), { passive: true });
-window.addEventListener("resize", () => window.requestAnimationFrame(updateBlooAvoidance));
+window.addEventListener(
+  "scroll",
+  () => {
+    window.requestAnimationFrame(() => {
+      syncOverlayGeometry();
+      updateBlooAvoidance();
+    });
+  },
+  { passive: true },
+);
+window.addEventListener("resize", () =>
+  window.requestAnimationFrame(() => {
+    syncOverlayGeometry();
+    updateBlooAvoidance();
+  }),
+);
+
+if ("ResizeObserver" in window) {
+  new ResizeObserver(() => window.requestAnimationFrame(syncOverlayGeometry)).observe(elements.canvas);
+}
 
 elements.strengthValue.textContent = describeStrength(elements.blurStrength.value);
 window.requestAnimationFrame(updateBlooAvoidance);
