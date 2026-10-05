@@ -63,4 +63,4 @@ Automatic redaction is assistance, not a guarantee. BlurBuddy asks the user to r
 
 ## Built for Hacktoberfest 2026
 
-Created for the DEV Hacktoberfest Weekend Challenge: **Build for a Friend**.
+Created for the DEV Hacktoberfest Weekend Challenge: **Build for a Friend**
